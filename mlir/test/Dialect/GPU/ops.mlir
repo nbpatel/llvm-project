@@ -131,8 +131,15 @@ module attributes {gpu.container_module} {
     %c0 = arith.constant 0 : i32
     %t0 = gpu.wait async
 
+    // CHECK: %[[stream:.*]] = gpu.create_stream : !gpu.stream
+    %stream = gpu.create_stream : !gpu.stream
+
     // CHECK: gpu.launch_func @kernels::@kernel_1 blocks in (%{{.*}}, %{{.*}}, %{{.*}}) threads in (%{{.*}}, %{{.*}}, %{{.*}}) args(%{{.*}} : f32, %{{.*}} : memref<?xf32, 1>)
     gpu.launch_func @kernels::@kernel_1 blocks in (%cst, %cst, %cst) threads in (%cst, %cst, %cst) args(%0 : f32, %1 : memref<?xf32, 1>)
+
+    gpu.launch_func @kernels::@kernel_1 blocks in (%cst, %cst, %cst) threads in (%cst, %cst, %cst) stream %stream args(%0 : f32, %1 : memref<?xf32, 1>)
+
+    gpu.launch_func @kernels::@kernel_1 blocks in (%cst, %cst, %cst) threads in (%cst, %cst, %cst) stream %stream dynamic_shared_memory_size %c0 args(%0 : f32, %1 : memref<?xf32, 1>)
 
     gpu.launch_func @kernels::@kernel_1 blocks in (%cst, %cst, %cst) threads in (%cst, %cst, %cst) dynamic_shared_memory_size %c0 args(%0 : f32, %1 : memref<?xf32, 1>)
 
@@ -218,6 +225,7 @@ module attributes {gpu.container_module} {
   func.func @alloc() {
     // CHECK-LABEL: func @alloc()
 
+
     // CHECK: %[[m0:.*]] = gpu.alloc () : memref<13xf32, 1>
     %m0 = gpu.alloc () : memref<13xf32, 1>
     // CHECK: gpu.dealloc %[[m0]] : memref<13xf32, 1>
@@ -233,6 +241,13 @@ module attributes {gpu.container_module} {
     %m2 = gpu.alloc host_shared () : memref<13xf32, 1>
     // CHECK: gpu.dealloc %[[m2]] : memref<13xf32, 1>
     gpu.dealloc %m2 : memref<13xf32, 1>
+
+    // CHECK: %[[stream:.*]] = gpu.create_stream : !gpu.stream
+    %stream = gpu.create_stream : !gpu.stream
+    // CHECK: %[[m3:.*]] = gpu.alloc () stream %[[stream]] : memref<13xf32, 1>
+    %m3 = gpu.alloc () stream %stream  : memref<13xf32, 1>
+    // CHECK: gpu.dealloc %[[m3]] stream %[[stream]] : memref<13xf32, 1>
+    gpu.dealloc %m3 stream %stream : memref<13xf32, 1>
 
     return
   }
@@ -268,6 +283,16 @@ module attributes {gpu.container_module} {
     %0 = gpu.wait async
     // CHECK: {{.*}} = gpu.memcpy async [%[[t0]]] {{.*}}, {{.*}} : memref<3x7xf32>, memref<3x7xf32, 1>
     %1 = gpu.memcpy async [%0] %dst, %src : memref<3x7xf32>, memref<3x7xf32, 1>
+
+    // CHECK: %[[stream:.*]] = gpu.create_stream : !gpu.stream
+    %stream = gpu.create_stream : !gpu.stream
+    // CHECK: gpu.memcpy {{.*}}, {{.*}} stream %[[stream]] : memref<3x7xf32>, memref<3x7xf32, 1>
+    gpu.memcpy %dst, %src stream %stream : memref<3x7xf32>, memref<3x7xf32, 1>
+    // CHECK: %[[t1:.*]] = gpu.wait async stream %[[stream]]
+    %2 = gpu.wait async stream %stream
+    // CHECK: {{.*}} = gpu.memcpy async [%[[t1]]] {{.*}}, {{.*}} stream %[[stream]] : memref<3x7xf32>, memref<3x7xf32, 1>
+    %3 = gpu.memcpy async [%2] %dst, %src stream %stream : memref<3x7xf32>, memref<3x7xf32, 1>
+
     return
   }
 
@@ -279,6 +304,16 @@ module attributes {gpu.container_module} {
     %0 = gpu.wait async
     // CHECK: {{.*}} = gpu.memset async [%[[t0]]] {{.*}}, {{.*}} : memref<3x7xf32>, f32
     %1 = gpu.memset async [%0] %dst, %value : memref<3x7xf32>, f32
+
+    // CHECK: %[[stream:.*]] = gpu.create_stream : !gpu.stream
+    %stream = gpu.create_stream : !gpu.stream
+    // CHECK: gpu.memset {{.*}}, {{.*}} stream %[[stream]] : memref<3x7xf32>, f32
+    gpu.memset %dst, %value stream %stream : memref<3x7xf32>, f32
+    // CHECK: %[[t1:.*]] = gpu.wait async stream %[[stream]]
+    %2 = gpu.wait async stream %stream
+    // CHECK: {{.*}} = gpu.memset async [%[[t1]]] {{.*}}, {{.*}} stream %[[stream]] : memref<3x7xf32>, f32
+    %3 = gpu.memset async [%2] %dst, %value stream %stream : memref<3x7xf32>, f32
+
     return
   }
 
@@ -315,6 +350,13 @@ module attributes {gpu.container_module} {
   func.func @set_default_device(%arg0: i32) {
     // CHECK: gpu.set_default_device
     gpu.set_default_device %arg0
+    return
+  }
+
+  // CHECK-LABEL: func @create_stream_with_device
+  func.func @create_stream_with_device(%device: !gpu.device) {
+    // CHECK: gpu.create_stream
+    %stream = gpu.create_stream  %device : !gpu.stream
     return
   }
 }

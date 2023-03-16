@@ -94,6 +94,14 @@ def GPU_AsyncToken : DialectType<
   GPU_Dialect, CPred<"$_self.isa<::mlir::gpu::AsyncTokenType>()">, "async token type">,
              BuildableType<"mlir::gpu::AsyncTokenType::get($_builder.getContext())">;
 
+def GPU_Stream : DialectType<
+  GPU_Dialect, CPred<"$_self.isa<::mlir::gpu::StreamType>()">, "stream type">,
+             BuildableType<"mlir::gpu::StreamType::get($_builder.getContext())">;
+
+def GPU_Device : DialectType<
+  GPU_Dialect, CPred<"$_self.isa<::mlir::gpu::DeviceType>()">, "device type">,
+             BuildableType<"mlir::gpu::DeviceType::get($_builder.getContext())">;
+
 // Predicat to check if type is gpu::MMAMatrixType.
 def IsMMAMatrixTypePred : CPred<"$_self.isa<::mlir::gpu::MMAMatrixType>()">;
 

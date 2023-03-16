@@ -142,6 +142,8 @@ struct GPUInlinerInterface : public DialectInlinerInterface {
 void GPUDialect::initialize() {
   addTypes<AsyncTokenType>();
   addTypes<MMAMatrixType>();
+  addTypes<StreamType>();
+  addTypes<DeviceType>();
   addOperations<
 #define GET_OP_LIST
 #include "mlir/Dialect/GPU/IR/GPUOps.cpp.inc"
@@ -163,6 +165,12 @@ Type GPUDialect::parseType(DialectAsmParser &parser) const {
   // Handle 'async token' types.
   if (keyword == "async.token")
     return AsyncTokenType::get(context);
+
+  if (keyword == "stream")
+    return StreamType::get(context);
+
+  if (keyword == "device")
+    return DeviceType::get(context);
 
   if (keyword == "mma_matrix") {
     SMLoc beginLoc = parser.getNameLoc();
@@ -203,6 +211,8 @@ Type GPUDialect::parseType(DialectAsmParser &parser) const {
 void GPUDialect::printType(Type type, DialectAsmPrinter &os) const {
   TypeSwitch<Type>(type)
       .Case<AsyncTokenType>([&](Type) { os << "async.token"; })
+      .Case<StreamType>([&](Type) { os << "stream"; })
+      .Case<DeviceType>([&](Type) { os << "device"; })
       .Case<MMAMatrixType>([&](MMAMatrixType fragTy) {
         os << "mma_matrix<";
         auto shape = fragTy.getShape();
@@ -726,6 +736,19 @@ void LaunchOp::getCanonicalizationPatterns(RewritePatternSet &rewrites,
 }
 
 //===----------------------------------------------------------------------===//
+// CreateStreamOp
+//===----------------------------------------------------------------------===//
+
+void CreateStreamOp::build(OpBuilder &odsBuilder, OperationState &result,
+                           Value device) {
+  if (device)
+    result.addOperands(device);
+
+  SmallVector<int32_t, 1> segmentSizes(1, 1);
+  segmentSizes.front() = device ? 1 : 0;
+}
+
+//===----------------------------------------------------------------------===//
 // LaunchFuncOp
 //===----------------------------------------------------------------------===//
 
@@ -733,7 +756,7 @@ void LaunchFuncOp::build(OpBuilder &builder, OperationState &result,
                          GPUFuncOp kernelFunc, KernelDim3 gridSize,
                          KernelDim3 getBlockSize, Value dynamicSharedMemorySize,
                          ValueRange kernelOperands, Type asyncTokenType,
-                         ValueRange asyncDependencies) {
+                         ValueRange asyncDependencies, Value stream) {
   result.addOperands(asyncDependencies);
   if (asyncTokenType)
     result.types.push_back(builder.getType<AsyncTokenType>());
@@ -749,10 +772,16 @@ void LaunchFuncOp::build(OpBuilder &builder, OperationState &result,
       SymbolRefAttr::get(kernelModule.getNameAttr(),
                          {SymbolRefAttr::get(kernelFunc.getNameAttr())});
   result.addAttribute(getKernelAttrName(result.name), kernelSymbol);
-  SmallVector<int32_t, 9> segmentSizes(9, 1);
+
+  if (stream)
+    result.addOperands(stream);
+
+  SmallVector<int32_t, 10> segmentSizes(10, 1);
   segmentSizes.front() = asyncDependencies.size();
-  segmentSizes[segmentSizes.size() - 2] = dynamicSharedMemorySize ? 1 : 0;
-  segmentSizes.back() = static_cast<int32_t>(kernelOperands.size());
+  segmentSizes[segmentSizes.size() - 3] = dynamicSharedMemorySize ? 1 : 0;
+  segmentSizes[segmentSizes.size() - 2] =
+      static_cast<int32_t>(kernelOperands.size());
+  segmentSizes.back() = stream ? 1 : 0;
   result.addAttribute(getOperandSegmentSizeAttr(),
                       builder.getDenseI32ArrayAttr(segmentSizes));
 }
@@ -1314,6 +1343,23 @@ LogicalResult MemsetOp::fold(FoldAdaptor adaptor,
 // GPU_WaitOp
 //===----------------------------------------------------------------------===//
 
+void WaitOp::build(OpBuilder &builder, OperationState &result,
+                   Type asyncTokenType, ValueRange asyncDependencies,
+                   Value stream) {
+  result.addOperands(asyncDependencies);
+  if (asyncTokenType)
+    result.types.push_back(builder.getType<AsyncTokenType>());
+
+  if (stream)
+    result.addOperands(stream);
+
+  SmallVector<int32_t, 2> segmentSizes(2, 1);
+  segmentSizes.front() = asyncDependencies.size();
+  segmentSizes.back() = stream ? 1 : 0;
+  result.addAttribute(getOperandSegmentSizeAttr(),
+                      builder.getDenseI32ArrayAttr(segmentSizes));
+}
+
 namespace {
 
 /// Remove gpu.wait op use of gpu.wait op def without async dependencies.
@@ -1327,17 +1373,21 @@ public:
                                 PatternRewriter &rewriter) const final {
     auto predicate = [](Value value) {
       auto waitOp = value.getDefiningOp<WaitOp>();
-      return waitOp && waitOp->getNumOperands() == 0;
+      return waitOp && waitOp.getAsyncDependencies().size() == 0;
     };
+
     if (llvm::none_of(op.getAsyncDependencies(), predicate))
       return failure();
+
     SmallVector<Value> validOperands;
-    for (Value operand : op->getOperands()) {
+    for (Value operand : op.getAsyncDependencies()) {
       if (predicate(operand))
         continue;
       validOperands.push_back(operand);
     }
-    rewriter.updateRootInPlace(op, [&]() { op->setOperands(validOperands); });
+
+    rewriter.updateRootInPlace(
+        op, [&]() { op.getAsyncDependenciesMutable().assign(validOperands); });
     return success();
   }
 };

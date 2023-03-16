@@ -45,6 +45,18 @@ public:
   using Base::Base;
 };
 
+class StreamType : public Type::TypeBase<StreamType, Type, TypeStorage> {
+public:
+  // Used for generic hooks in TypeBase.
+  using Base::Base;
+};
+
+class DeviceType : public Type::TypeBase<DeviceType, Type, TypeStorage> {
+public:
+  // Used for generic hooks in TypeBase.
+  using Base::Base;
+};
+
 /// MMAMatrixType storage and uniquing. Array is uniqued based on its shape
 /// and type.
 struct MMAMatrixStorageType : public TypeStorage {

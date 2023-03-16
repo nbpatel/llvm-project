@@ -378,7 +378,8 @@ def GPU_LaunchFuncOp : GPU_Op<"launch_func",
                Index:$gridSizeX, Index:$gridSizeY, Index:$gridSizeZ,
                Index:$blockSizeX, Index:$blockSizeY, Index:$blockSizeZ,
                Optional<I32>:$dynamicSharedMemorySize,
-               Variadic<AnyType>:$kernelOperands)>,
+               Variadic<AnyType>:$kernelOperands,
+               Optional<GPU_Stream>:$stream)>,
     Results<(outs Optional<GPU_AsyncToken>:$asyncToken)> {
   let summary = "Launches a function as a GPU kernel";
 
@@ -465,12 +466,13 @@ def GPU_LaunchFuncOp : GPU_Op<"launch_func",
   let skipDefaultBuilders = 1;
 
   let builders = [
-    OpBuilder<(ins "GPUFuncOp":$kernelFunc, "KernelDim3":$gridSize,
-      "KernelDim3":$blockSize, "Value":$dynamicSharedMemorySize,
+    OpBuilder<(ins "GPUFuncOp":$kernelFunc,
+      "KernelDim3":$gridSize, "KernelDim3":$blockSize,
+      "Value":$dynamicSharedMemorySize,
       "ValueRange":$kernelOperands,
       CArg<"Type", "nullptr">:$asyncTokenType,
-      CArg<"ValueRange", "{}">:$asyncDependencies)>
-  ];
+      CArg<"ValueRange", "{}">:$asyncDependencies,
+      CArg<"Value", "Value{}">:$stream)>];
 
   let extraClassDeclaration = [{
     /// The name of the kernel's containing module.
@@ -502,6 +504,7 @@ def GPU_LaunchFuncOp : GPU_Op<"launch_func",
       $kernel
       `blocks` `in` ` ` `(`$gridSizeX`,` $gridSizeY`,` $gridSizeZ`)`
       `threads` `in` ` ` `(`$blockSizeX`,` $blockSizeY`,` $blockSizeZ`)`
+      (`stream` $stream^)?
       (`dynamic_shared_memory_size` $dynamicSharedMemorySize^)?
       custom<LaunchFuncOperands>($kernelOperands, type($kernelOperands)) attr-dict
   }];
@@ -929,7 +932,7 @@ def GPU_HostRegisterOp : GPU_Op<"host_register">,
   let assemblyFormat = "$value attr-dict `:` type($value)";
 }
 
-def GPU_WaitOp : GPU_Op<"wait", [GPU_AsyncOpInterface]> {
+def GPU_WaitOp : GPU_Op<"wait", [GPU_AsyncOpInterface, AttrSizedOperandSegments]> {
   let summary = "Wait for async gpu ops to complete.";
   let description = [{
     This op synchronizes the host or the device with a list of dependent ops.
@@ -963,11 +966,21 @@ def GPU_WaitOp : GPU_Op<"wait", [GPU_AsyncOpInterface]> {
     ```
   }];
 
-  let arguments = (ins Variadic<GPU_AsyncToken>:$asyncDependencies);
+  let arguments = (ins Variadic<GPU_AsyncToken>:$asyncDependencies,
+                   Optional<GPU_Stream>:$stream);
   let results = (outs Optional<GPU_AsyncToken>:$asyncToken);
+
+  let skipDefaultBuilders = 1;
+
+  let builders = [
+    OpBuilder<(ins 
+      CArg<"Type", "nullptr">:$asyncTokenType,
+      CArg<"ValueRange", "{}">:$asyncDependencies,
+      CArg<"Value", "Value{}">:$stream)>];
 
   let assemblyFormat = [{
     custom<AsyncDependencies>(type($asyncToken), $asyncDependencies) attr-dict
+    (`stream` $stream^)?
   }];
 
   let hasCanonicalizer = 1;
@@ -1002,7 +1015,7 @@ def GPU_AllocOp : GPU_Op<"alloc", [
 
   let arguments = (ins Variadic<GPU_AsyncToken>:$asyncDependencies,
                    Variadic<Index>:$dynamicSizes, Variadic<Index>:$symbolOperands,
-                   UnitAttr:$hostShared);
+                   UnitAttr:$hostShared, Optional<GPU_Stream>:$stream);
   let results = (outs Res<AnyMemRef, "", [MemAlloc]>:$memref,
                  Optional<GPU_AsyncToken>:$asyncToken);
 
@@ -1011,15 +1024,17 @@ def GPU_AllocOp : GPU_Op<"alloc", [
   }];
 
   let assemblyFormat = [{
-    custom<AsyncDependencies>(type($asyncToken), $asyncDependencies) (` ` `host_shared` $hostShared^)? ` `
-    `(` $dynamicSizes `)` (`` `[` $symbolOperands^ `]`)? attr-dict `:` type($memref)
+    custom<AsyncDependencies>(type($asyncToken), $asyncDependencies) 
+    (` ` `host_shared` $hostShared^)? ` `
+    `(` $dynamicSizes `)` (`` `[` $symbolOperands^ `]`)?
+    (` ` `stream` $stream^)? ` ` attr-dict `:` type($memref)
   }];
 
   let hasVerifier = 1;
   let hasCanonicalizer = 1;
 }
 
-def GPU_DeallocOp : GPU_Op<"dealloc", [GPU_AsyncOpInterface]> {
+def GPU_DeallocOp : GPU_Op<"dealloc", [GPU_AsyncOpInterface, AttrSizedOperandSegments]> {
 
   let summary = "GPU memory deallocation operation";
 
@@ -1043,16 +1058,18 @@ def GPU_DeallocOp : GPU_Op<"dealloc", [GPU_AsyncOpInterface]> {
   }];
 
   let arguments = (ins Variadic<GPU_AsyncToken>:$asyncDependencies,
-                   Arg<AnyMemRef, "", [MemFree]>:$memref);
+                   Arg<AnyMemRef, "", [MemFree]>:$memref,
+                   Optional<GPU_Stream>:$stream);
   let results = (outs Optional<GPU_AsyncToken>:$asyncToken);
 
   let assemblyFormat = [{
     custom<AsyncDependencies>(type($asyncToken), $asyncDependencies)
-    $memref attr-dict `:` type($memref)
+    $memref
+    (`stream` $stream^)? attr-dict `:` type($memref)
   }];
 }
 
-def GPU_MemcpyOp : GPU_Op<"memcpy", [GPU_AsyncOpInterface]> {
+def GPU_MemcpyOp : GPU_Op<"memcpy", [GPU_AsyncOpInterface, AttrSizedOperandSegments]> {
 
   let summary = "GPU memcpy operation";
 
@@ -1075,12 +1092,14 @@ def GPU_MemcpyOp : GPU_Op<"memcpy", [GPU_AsyncOpInterface]> {
 
   let arguments = (ins Variadic<GPU_AsyncToken>:$asyncDependencies,
                    Arg<AnyMemRef, "", [MemWrite]>:$dst,
-                   Arg<AnyMemRef, "", [MemRead]>:$src);
+                   Arg<AnyMemRef, "", [MemRead]>:$src,
+                   Optional<GPU_Stream>:$stream);
   let results = (outs Optional<GPU_AsyncToken>:$asyncToken);
 
   let assemblyFormat = [{
     custom<AsyncDependencies>(type($asyncToken), $asyncDependencies)
-    $dst`,` $src `:` type($dst)`,` type($src) attr-dict
+    $dst`,` $src  (`stream` $stream^)? `:` type($dst)`,` type($src) attr-dict
+
   }];
   let hasFolder = 1;
   let hasVerifier = 1;
@@ -1088,7 +1107,8 @@ def GPU_MemcpyOp : GPU_Op<"memcpy", [GPU_AsyncOpInterface]> {
 }
 
 def GPU_MemsetOp : GPU_Op<"memset",
-  [GPU_AsyncOpInterface, AllElementTypesMatch<["dst", "value"]>]> {
+  [GPU_AsyncOpInterface, AttrSizedOperandSegments,
+   AllElementTypesMatch<["dst", "value"]>]> {
 
   let summary = "GPU memset operation";
 
@@ -1111,12 +1131,13 @@ def GPU_MemsetOp : GPU_Op<"memset",
 
   let arguments = (ins Variadic<GPU_AsyncToken>:$asyncDependencies,
                    Arg<AnyMemRef, "", [MemWrite]>:$dst,
-                   Arg<AnyType, "">:$value);
+                   Arg<AnyType, "">:$value,
+                   Optional<GPU_Stream>:$stream);
   let results = (outs Optional<GPU_AsyncToken>:$asyncToken);
 
   let assemblyFormat = [{
     custom<AsyncDependencies>(type($asyncToken), $asyncDependencies)
-    $dst`,` $value `:` type($dst)`,` type($value) attr-dict
+    $dst`,` $value (`stream` $stream^)? `:` type($dst)`,` type($value) attr-dict
   }];
   let hasFolder = 1;
 }
@@ -1386,6 +1407,40 @@ def GPU_SubgroupMmaElementwiseOp : GPU_Op<"subgroup_mma_elementwise",
   let assemblyFormat = [{
     $opType $args attr-dict `:` functional-type($args, $res)
   }];
+}
+
+
+def GPU_CreateStreamOp : GPU_Op<"create_stream", [SameVariadicOperandSize]> {
+
+  let description = [{ 
+   The `gpu.create_stream` takes an optional argument `device` as input and
+   returns a stream, based on the device. If no device is provided, a default
+   device will be created by the underlying runtime.
+   The stream is then used for launching/queuing kernels
+   on the GPU.
+
+   Example:
+
+   ```mlir
+   %stream = gpu.create_stream %device : !gpu.stream
+
+   OR 
+
+   %stream = gpu.create_stream : !gpu.stream
+   ```
+
+  }];
+  
+  let skipDefaultBuilders = 1;
+
+  let arguments = (ins Optional<GPU_Device> : $device);
+  let results = (outs GPU_Stream : $stream);
+  let builders = [OpBuilder<(ins CArg<"Value", "Value{}">:$device)>];
+
+  let assemblyFormat = [{
+      ($device^)? attr-dict `:` type($stream)
+  }];
+
 }
 
 #endif // GPU_OPS
