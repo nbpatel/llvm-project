@@ -585,11 +585,11 @@ def ConvertGPUToSPIRV : Pass<"convert-gpu-to-spirv", "ModuleOp"> {
            "Use 64-bit integers to convert index types">,
     Option<"useOpenCL", "use-opencl",
            "bool", /*default=*/"false",
-           "Use OpenCL instead of Vulkan">
+           "Use OpenCL instead of Vulkan">,
     Option<"useCoopMatrixNV", "use-coop-matrix-nv",
            "bool", /*default=*/"false",
            "Use the NV cooperative matrix extension insted of the KHR extension"
-           " to lower GPU WMMA ops">,
+           " to lower GPU WMMA ops">
   ];
 }
 

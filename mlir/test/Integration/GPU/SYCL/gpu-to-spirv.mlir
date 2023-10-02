@@ -20,24 +20,20 @@ module @add attributes {gpu.container_module} {
   func.func @test(%arg0: memref<3x3xi64>, %arg1: memref<3x3xi64>) -> memref<3x3xi64> {
   %c3 = arith.constant 3 : index
   %c1 = arith.constant 1 : index
-  %0 = gpu.wait async
-  %memref, %asyncToken = gpu.alloc async [%0] host_shared (): memref<3x3xi64>
-  gpu.wait [%asyncToken]
-  memref.copy %arg1, %memref : memref<3x3xi64> to memref<3x3xi64>
-  %1 = gpu.wait async
-  %memref_0, %asyncToken_1 = gpu.alloc async [%1] host_shared () : memref<3x3xi64>
-  gpu.wait [%asyncToken_1]
+  %mem = gpu.alloc host_shared () : memref<3x3xi64>
+  memref.copy %arg1, %mem : memref<3x3xi64> to memref<3x3xi64>
+  %memref_0 = gpu.alloc host_shared () : memref<3x3xi64>
   memref.copy %arg0, %memref_0 : memref<3x3xi64> to memref<3x3xi64>
+  %memref_2 = gpu.alloc host_shared () : memref<3x3xi64>
   %2 = gpu.wait async
-  %memref_2, %asyncToken_3 = gpu.alloc async [%2] host_shared () : memref<3x3xi64>
-  %3 = gpu.launch_func async [%asyncToken_3] @test_kernel::@test_kernel blocks in (%c3, %c3, %c1) threads in (%c1, %c1, %c1) args(%memref_0 : memref<3x3xi64>, %memref : memref<3x3xi64>, %memref_2 : memref<3x3xi64>)
+  %3 = gpu.launch_func async [%2] @test_kernel::@test_kernel blocks in (%c3, %c3, %c1) threads in (%c1, %c1, %c1) args(%memref_0 : memref<3x3xi64>, %mem : memref<3x3xi64>, %memref_2 : memref<3x3xi64>)
   gpu.wait [%3]
   %alloc = memref.alloc() : memref<3x3xi64>
   memref.copy %memref_2, %alloc : memref<3x3xi64> to memref<3x3xi64>
   %4 = gpu.wait async
   %5 = gpu.dealloc async [%4] %memref_2 : memref<3x3xi64>
   %6 = gpu.dealloc async [%5] %memref_0 : memref<3x3xi64>
-  %7 = gpu.dealloc async [%6] %memref : memref<3x3xi64>
+  %7 = gpu.dealloc async [%6] %mem : memref<3x3xi64>
   gpu.wait [%7]
   return %alloc : memref<3x3xi64>
   }
