@@ -3207,7 +3207,18 @@ void mlir::python::populateIRCore(py::module &m) {
            "Inserts an operation.")
       .def_property_readonly(
           "block", [](PyInsertionPoint &self) { return self.getBlock(); },
-          "Returns the block that this InsertionPoint points to.");
+          "Returns the block that this InsertionPoint points to.")
+      .def_property_readonly(
+          "ref_operation",
+          [](PyInsertionPoint &self) -> py::object {
+            auto ref_operation = self.getRefOperation();
+            if (ref_operation)
+              return ref_operation->getObject();
+            return py::none();
+          },
+          "The reference operation before which new operations are "
+          "inserted, or None if the insertion point is at the end of "
+          "the block");
 
   //----------------------------------------------------------------------------
   // Mapping of PyAttribute.
@@ -3488,36 +3499,32 @@ void mlir::python::populateIRCore(py::module &m) {
           kValueDunderStrDocstring)
       .def(
           "get_name",
-          [](PyValue &self, std::optional<bool> useLocalScope,
-             std::optional<std::reference_wrapper<PyAsmState>> state) {
+          [](PyValue &self, bool useLocalScope) {
             PyPrintAccumulator printAccum;
-            MlirOpPrintingFlags flags;
-            MlirAsmState valueState;
-            // Use state if provided, else create a new state.
-            if (state) {
-              valueState = state.value().get().get();
-              // Don't allow setting using local scope and state at same time.
-              if (useLocalScope.has_value())
-                throw py::value_error(
-                    "setting AsmState and local scope together not supported");
-            } else {
-              flags = mlirOpPrintingFlagsCreate();
-              if (useLocalScope.value_or(false))
-                mlirOpPrintingFlagsUseLocalScope(flags);
-              valueState = mlirAsmStateCreateForValue(self.get(), flags);
-            }
+            MlirOpPrintingFlags flags = mlirOpPrintingFlagsCreate();
+            if (useLocalScope)
+              mlirOpPrintingFlagsUseLocalScope(flags);
+            MlirAsmState valueState =
+                mlirAsmStateCreateForValue(self.get(), flags);
             mlirValuePrintAsOperand(self.get(), valueState,
                                     printAccum.getCallback(),
                                     printAccum.getUserData());
-            // Release state if allocated locally.
-            if (!state) {
-              mlirOpPrintingFlagsDestroy(flags);
-              mlirAsmStateDestroy(valueState);
-            }
+            mlirOpPrintingFlagsDestroy(flags);
+            mlirAsmStateDestroy(valueState);
             return printAccum.join();
           },
-          py::arg("use_local_scope") = std::nullopt,
-          py::arg("state") = std::nullopt, kGetNameAsOperand)
+          py::arg("use_local_scope") = false)
+      .def(
+          "get_name",
+          [](PyValue &self, std::reference_wrapper<PyAsmState> state) {
+            PyPrintAccumulator printAccum;
+            MlirAsmState valueState = state.get().get();
+            mlirValuePrintAsOperand(self.get(), valueState,
+                                    printAccum.getCallback(),
+                                    printAccum.getUserData());
+            return printAccum.join();
+          },
+          py::arg("state"), kGetNameAsOperand)
       .def_property_readonly(
           "type", [](PyValue &self) { return mlirValueGetType(self.get()); })
       .def(
