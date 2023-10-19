@@ -810,7 +810,10 @@ LogicalResult ConvertAllocOpToGpuRuntimeCallPattern::matchAndRewrite(
   // Allocate the underlying buffer and store a pointer to it in the MemRef
   // descriptor.
   Type elementPtrType = this->getElementPtrType(memRefType);
-  auto stream = adaptor.getAsyncDependencies().front();
+  Value stream =
+      adaptor.getAsyncDependencies().empty()
+          ? streamCreateCallBuilder.create(loc, rewriter, {}).getResult()
+          : adaptor.getAsyncDependencies().front();
   Value allocatedPtr =
       allocCallBuilder.create(loc, rewriter, {sizeBytes, stream}).getResult();
   if (!getTypeConverter()->useOpaquePointers())
@@ -824,7 +827,17 @@ LogicalResult ConvertAllocOpToGpuRuntimeCallPattern::matchAndRewrite(
   auto memRefDescriptor = this->createMemRefDescriptor(
       loc, memRefType, allocatedPtr, alignedPtr, shape, strides, rewriter);
 
-  rewriter.replaceOp(allocOp, {memRefDescriptor, stream});
+  if (allocOp.getAsyncToken()) {
+    // Async launch: make dependent ops use the same stream.
+    rewriter.replaceOp(allocOp, {memRefDescriptor, stream});
+  } else {
+    // Synchronize with host and destroy stream. This must be the stream created
+    // above (with no other uses) because we check that the synchronous version
+    // does not have any async dependencies.
+    streamSynchronizeCallBuilder.create(loc, rewriter, {stream});
+    streamDestroyCallBuilder.create(loc, rewriter, {stream});
+    rewriter.replaceOp(allocOp, {memRefDescriptor});
+  }
 
   return success();
 }
